@@ -14,6 +14,8 @@ struct Data {
 struct CardDeck {
     title: String,
     date: String,
+    index: u32,
+    total_number_of_cards: u32,
     cards_left: u32,
     flashcards: Vec<FlashCard>,
 }
@@ -23,7 +25,7 @@ struct FlashCard {
     title: String,
     question: String,
     answer: String,
-    mark: bool,
+    finished: bool,
 }
 
 fn main() -> Result<()> {

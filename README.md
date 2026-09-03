@@ -1,9 +1,9 @@
 _Flashcards Format_
 flashcards.md
 
-`mdflash "<path-to-direcory>`
+`mdflash "<path-to-direcory>"`
 or
-`mdflash "<path-to-file>`
+`mdflash "<path-to-file>"`
 
 ```[markdown]
 ---

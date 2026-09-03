@@ -1,5 +1,3 @@
-use std::slice::from_mut;
-
 use color_eyre::eyre::{Ok, Result};
 use crossterm::event::{self, Event};
 use ratatui::{
@@ -8,21 +6,25 @@ use ratatui::{
     style::{Color, Stylize},
     widgets::{Block, List, ListItem, Widget},
 };
+use std::env;
+use std::fs;
+use std::path::PathBuf;
 
 #[derive(Debug, Default)]
 struct AppState {
-    path: &'static str,
+    path: PathBuf,
     data: Data,
 }
 
 #[derive(Debug, Default)]
 struct Data {
-    decks: Vec<CardDeck>,
+    dir_files: Vec<PathBuf>,
 }
 
 #[derive(Debug, Default)]
 struct CardDeck {
     title: &'static str,
+    path: &'static str,
     date: &'static str,
     index: u32,
     total_number_of_cards: u32,
@@ -39,8 +41,7 @@ struct FlashCard {
 }
 
 fn main() -> Result<()> {
-    let mut state = AppState::default();
-    init(&mut state);
+    let mut state = init().unwrap();
 
     color_eyre::install();
     let terminal = ratatui::init();
@@ -50,23 +51,20 @@ fn main() -> Result<()> {
     res
 }
 
-fn init(app_state: &mut AppState) -> Result<()> {
-    let card = FlashCard {
-        title: "TestCard",
-        question: "Why?",
-        answer: "That's why!",
-        finished: false,
+fn init() -> Result<AppState> {
+    let path = env::args().nth(1).unwrap_or_else(|| ".".to_string());
+    let path_buf = PathBuf::from(&path);
+
+    let entries = fs::read_dir(&path)?
+        .map(|res| res.map(|e| e.path()))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let state = AppState {
+        path: path_buf,
+        data: Data { dir_files: entries },
     };
-    let cards = vec![card];
-    app_state.data.decks.push(CardDeck {
-        title: "Test",
-        date: "2026-09-03",
-        index: 0,
-        total_number_of_cards: 1,
-        cards_left: 1,
-        flashcards: cards,
-    });
-    Ok(())
+
+    Ok(state)
 }
 
 fn run(mut terminal: DefaultTerminal, app_state: &mut AppState) -> Result<()> {
@@ -98,12 +96,26 @@ fn render(frame: &mut Frame, app_state: &AppState) {
         .fg(Color::DarkGray)
         .render(border_area, frame.buffer_mut());
 
-    List::new(
-        app_state
-            .data
-            .decks
-            .iter()
-            .map(|x| ListItem::from(x.title.clone())),
-    )
-    .render(inner_area, frame.buffer_mut())
+    let items = app_state
+        .data
+        .dir_files
+        .iter()
+        .filter(|path| {
+            path.is_file()
+                && path
+                    .extension()
+                    .map_or(false, |ext| ext.eq_ignore_ascii_case("md"))
+        })
+        .map(|path| {
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.to_string_lossy().into_owned());
+
+            ListItem::new(name)
+        });
+
+    let list = List::new(items);
+
+    list.render(inner_area, frame.buffer_mut())
 }

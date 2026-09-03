@@ -6,4 +6,6 @@ edition = "2024"
 [dependencies]
 color-eyre = "0.6.5"
 crossterm = "0.29.0"
+env = "1.0.1"
+fs = "0.0.6"
 ratatui = { version =  "0.30.2", features = ["all-widgets"] }

@@ -6,16 +6,20 @@ flashcards.md
 
 `mdflash "<path-to-file>"` opens flashcards
 
-```[markdown]
+```markdown
 // Metadata
 ---
+
 tags:
-  - <tag1>[string?]
-  - <tag2>[string?]
-  - <tag3>[string?]
-<date>["YYYY-MM-DD"]
-<author>[string?]
+
+- <tag1>[string?]
+- <tag2>[string?]
+- <tag3>[string?]
+  <date>["YYYY-MM-DD"]
+  <author>[string?]
+
 ---
+
 # <deck_title>[string]
 
 ## <subsection>[string?]

@@ -5,6 +5,27 @@ use ratatui::{
     widgets::{Paragraph, Widget},
 };
 
+#[derive(Debug, Default)]
+struct Data {
+    decks: Vec<CardDeck>,
+}
+
+#[derive(Debug, Default)]
+struct CardDeck {
+    title: String,
+    date: String,
+    cards_left: u32,
+    flashcards: Vec<FlashCard>,
+}
+
+#[derive(Debug, Default)]
+struct FlashCard {
+    title: String,
+    question: String,
+    answer: String,
+    mark: bool,
+}
+
 fn main() -> Result<()> {
     color_eyre::install();
     let terminal = ratatui::init();

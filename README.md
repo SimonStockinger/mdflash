@@ -9,10 +9,10 @@ or
 // Metadata
 ---
 tags:
-  - flashcards
-  - sql
-  - datenbanken
-created: <2026-09-03>
+  - <tag1>[string?]
+  - <tag2>[string?]
+  - <tag3>[string?]
+<date>["YYYY-MM-DD"]
 <author>[string?]
 ---
 # <deck_title>[string]

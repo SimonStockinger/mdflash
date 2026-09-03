@@ -6,15 +6,14 @@ or
 `mdflash "<path-to-file>"`
 
 ```[markdown]
+// Metadata
 ---
-deck: Informatik::Datenbanken
 tags:
   - flashcards
   - sql
   - datenbanken
-created: 2026-09-03
-author: Dein Name
-
+created: <2026-09-03>
+<author>[string?]
 ---
 # <deck_title>[string]
 

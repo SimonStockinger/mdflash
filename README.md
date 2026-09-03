@@ -1,9 +1,10 @@
 _Flashcards Format_
 flashcards.md
+`mdflash`: opens with last opened directory,
 
-`mdflash "<path-to-direcory>"`
-or
-`mdflash "<path-to-file>"`
+`mdflash "<path-to-direcory>"` opens directory
+
+`mdflash "<path-to-file>"` opens flashcards
 
 ```[markdown]
 // Metadata

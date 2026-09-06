@@ -1,10 +1,10 @@
 use color_eyre::eyre::{Result, eyre};
 use crossterm::event::{self, Event, KeyCode};
+use ratatui::widgets::{Block, BorderType, List, ListItem, Padding, Paragraph, Widget, Wrap};
 use ratatui::{
     DefaultTerminal, Frame,
     layout::{Constraint, Layout},
     style::{Color, Style, Stylize},
-    widgets::{Block, BorderType, List, ListItem, Paragraph, Widget, Wrap},
 };
 use std::env;
 use std::fs;
@@ -102,7 +102,301 @@ fn init() -> Result<AppState> {
 }
 
 // -----------------------------------------------------------------------------
-// Markdown Parser nach Obsidian SR Spezifikation
+// LaTeX Math zu Unicode Konvertierung
+// -----------------------------------------------------------------------------
+
+fn render_math_in_text(input: &str) -> String {
+    let mut out = String::new();
+    let mut chars = input.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch == '$' {
+            let is_block = chars.peek() == Some(&'$');
+            if is_block {
+                chars.next(); // zweites '$' verbrauchen
+            }
+
+            let mut formula = String::new();
+            let mut closed = false;
+
+            while let Some(c) = chars.next() {
+                if c == '$' {
+                    if is_block {
+                        if chars.peek() == Some(&'$') {
+                            chars.next();
+                            closed = true;
+                            break;
+                        } else {
+                            formula.push(c);
+                        }
+                    } else {
+                        closed = true;
+                        break;
+                    }
+                } else {
+                    formula.push(c);
+                }
+            }
+
+            if closed {
+                let converted = convert_latex_symbols(&formula);
+                if is_block {
+                    out.push_str(&format!("\n   {}\n", converted.trim()));
+                } else {
+                    out.push_str(&converted);
+                }
+            } else {
+                // Nicht geschlossenes '$': Roh ausgeben
+                if is_block {
+                    out.push_str("$$");
+                } else {
+                    out.push('$');
+                }
+                out.push_str(&formula);
+            }
+        } else {
+            out.push(ch);
+        }
+    }
+
+    out
+}
+
+fn convert_latex_symbols(latex: &str) -> String {
+    let mut s = latex.to_string();
+
+    // Mengenbereiche & Blackboard
+    s = s.replace(r"\mathbb{R}", "ℝ");
+    s = s.replace(r"\mathbb{N}", "ℕ");
+    s = s.replace(r"\mathbb{Z}", "ℤ");
+    s = s.replace(r"\mathbb{Q}", "ℚ");
+    s = s.replace(r"\mathbb{C}", "ℂ");
+
+    // Beweis- und Logikoperatoren
+    s = s.replace(r"\iff", "⟺");
+    s = s.replace(r"\implies", "⟹");
+    s = s.replace(r"\to", "→");
+    s = s.replace(r"\forall", "∀");
+    s = s.replace(r"\exists", "∃");
+    s = s.replace(r"\nexists", "∄");
+    s = s.replace(r"\land", "∧");
+    s = s.replace(r"\lor", "∨");
+    s = s.replace(r"\neg", "¬");
+    s = s.replace(r"\qed", "∎");
+
+    // Mengenlehre & Relationen
+    s = s.replace(r"\in", "∈");
+    s = s.replace(r"\notin", "∉");
+    s = s.replace(r"\subset", "⊂");
+    s = s.replace(r"\subseteq", "⊆");
+    s = s.replace(r"\cup", "∪");
+    s = s.replace(r"\cap", "∩");
+    s = s.replace(r"\setminus", "∖");
+    s = s.replace(r"\empty", "∅");
+    s = s.replace(r"\emptyset", "∅");
+
+    // Vergleich & Arithmetik
+    s = s.replace(r"\le", "≤");
+    s = s.replace(r"\leq", "≤");
+    s = s.replace(r"\ge", "≥");
+    s = s.replace(r"\geq", "≥");
+    s = s.replace(r"\neq", "≠");
+    s = s.replace(r"\approx", "≈");
+    s = s.replace(r"\equiv", "≡");
+    s = s.replace(r"\cdot", "·");
+    s = s.replace(r"\times", "×");
+    s = s.replace(r"\pm", "±");
+    s = s.replace(r"\infty", "∞");
+
+    // Griechische Buchstaben (häufig in Beweisen)
+    s = s.replace(r"\alpha", "α");
+    s = s.replace(r"\beta", "β");
+    s = s.replace(r"\gamma", "γ");
+    s = s.replace(r"\Gamma", "Γ");
+    s = s.replace(r"\delta", "δ");
+    s = s.replace(r"\Delta", "Δ");
+    s = s.replace(r"\epsilon", "ε");
+    s = s.replace(r"\varepsilon", "ε");
+    s = s.replace(r"\zeta", "ζ");
+    s = s.replace(r"\eta", "η");
+    s = s.replace(r"\theta", "θ");
+    s = s.replace(r"\lambda", "λ");
+    s = s.replace(r"\mu", "μ");
+    s = s.replace(r"\pi", "π");
+    s = s.replace(r"\sigma", "σ");
+    s = s.replace(r"\Sigma", "Σ");
+    s = s.replace(r"\tau", "τ");
+    s = s.replace(r"\phi", "φ");
+    s = s.replace(r"\omega", "ω");
+    s = s.replace(r"\Omega", "Ω");
+
+    // Wurzeln & Brüche
+    s = replace_unary_cmd(&s, r"\sqrt", "√");
+    s = replace_frac(&s);
+    s = replace_unary_cmd(&s, r"\text", "");
+
+    // Exponenten und Indizes
+    s = convert_sub_and_superscripts(&s);
+
+    s
+}
+
+fn replace_unary_cmd(input: &str, cmd: &str, prefix: &str) -> String {
+    let mut res = input.to_string();
+    while let Some(start) = res.find(cmd) {
+        let after = &res[start + cmd.len()..];
+        if let Some(open) = after.find('{') {
+            if after[..open].trim().is_empty() {
+                if let Some(close) = find_matching_brace(&after[open..]) {
+                    let inner = &after[open + 1..open + close];
+                    let whole = &res[start..start + cmd.len() + open + close + 1];
+                    let replacement = format!("{}{}", prefix, inner);
+                    res = res.replacen(whole, &replacement, 1);
+                    continue;
+                }
+            }
+        }
+        break;
+    }
+    res
+}
+
+fn replace_frac(input: &str) -> String {
+    let mut res = input.to_string();
+    while let Some(start) = res.find(r"\frac") {
+        let after = &res[start + 5..];
+        if let Some(open1) = after.find('{') {
+            if let Some(close1) = find_matching_brace(&after[open1..]) {
+                let num = &after[open1 + 1..open1 + close1];
+                let rem = &after[open1 + close1 + 1..];
+                if let Some(open2) = rem.find('{') {
+                    if let Some(close2) = find_matching_brace(&rem[open2..]) {
+                        let den = &rem[open2 + 1..open2 + close2];
+                        let total_len = 5 + open1 + close1 + 1 + open2 + close2 + 1;
+                        let whole = &res[start..start + total_len];
+                        let replacement = format!("({} / {})", num.trim(), den.trim());
+                        res = res.replacen(whole, &replacement, 1);
+                        continue;
+                    }
+                }
+            }
+        }
+        break;
+    }
+    res
+}
+
+fn find_matching_brace(s: &str) -> Option<usize> {
+    let mut depth = 0;
+    for (idx, ch) in s.char_indices() {
+        if ch == '{' {
+            depth += 1;
+        } else if ch == '}' {
+            depth -= 1;
+            if depth == 0 {
+                return Some(idx);
+            }
+        }
+    }
+    None
+}
+
+fn convert_sub_and_superscripts(input: &str) -> String {
+    let mut out = String::new();
+    let chars: Vec<char> = input.chars().collect();
+    let mut i = 0;
+
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '^' || c == '_' {
+            let is_super = c == '^';
+            i += 1;
+            if i >= chars.len() {
+                out.push(c);
+                break;
+            }
+
+            if chars[i] == '{' {
+                i += 1;
+                while i < chars.len() && chars[i] != '}' {
+                    out.push(map_script_char(chars[i], is_super));
+                    i += 1;
+                }
+                if i < chars.len() && chars[i] == '}' {
+                    i += 1;
+                }
+            } else {
+                out.push(map_script_char(chars[i], is_super));
+                i += 1;
+            }
+        } else {
+            out.push(c);
+            i += 1;
+        }
+    }
+    out
+}
+
+fn map_script_char(c: char, is_super: bool) -> char {
+    if is_super {
+        match c {
+            '0' => '⁰',
+            '1' => '¹',
+            '2' => '²',
+            '3' => '³',
+            '4' => '⁴',
+            '5' => '⁵',
+            '6' => '⁶',
+            '7' => '⁷',
+            '8' => '⁸',
+            '9' => '⁹',
+            '+' => '⁺',
+            '-' => '⁻',
+            '=' => '⁼',
+            '(' => '⁽',
+            ')' => '⁾',
+            'n' => 'ⁿ',
+            'i' => 'ⁱ',
+            'x' => 'ˣ',
+            _ => c,
+        }
+    } else {
+        match c {
+            '0' => '₀',
+            '1' => '₁',
+            '2' => '₂',
+            '3' => '₃',
+            '4' => '₄',
+            '5' => '₅',
+            '6' => '₆',
+            '7' => '₇',
+            '8' => '₈',
+            '9' => '₉',
+            '+' => '₊',
+            '-' => '₋',
+            '=' => '₌',
+            '(' => '₍',
+            ')' => '₎',
+            'a' => 'ₐ',
+            'e' => 'ₑ',
+            'o' => 'ₒ',
+            'x' => 'ₓ',
+            'i' => 'ᵢ',
+            'j' => 'ⱼ',
+            'k' => 'ₖ',
+            'l' => 'ₗ',
+            'm' => 'ₘ',
+            'n' => 'ₙ',
+            'p' => 'ₚ',
+            's' => 'ₛ',
+            't' => 'ₜ',
+            _ => c,
+        }
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Markdown Deck & Card Parsing
 // -----------------------------------------------------------------------------
 
 #[derive(Default)]
@@ -180,26 +474,24 @@ fn parse_cards(body: &str) -> Vec<FlashCard> {
     while i < lines.len() {
         let line = lines[i].trim();
 
-        // 1. Überschriften (# ...) oder Leerzeilen überspringen
         if line.starts_with('#') || line.is_empty() {
             i += 1;
             continue;
         }
 
-        // 2. Multiline-Karten: Fragezeile gefolgt von einer Zeile mit nur "?"
         if is_multiline_separator(line) {
             i += 1;
             continue;
         }
 
+        // Multi-Line Card
         if i + 1 < lines.len() && is_multiline_separator(lines[i + 1].trim()) {
             let question = line.to_string();
             let mut answer_lines = Vec::new();
-            i += 2; // Überspringe Frage und '?'
+            i += 2;
 
             while i < lines.len() {
                 let curr = lines[i].trim();
-                // Abbruch bei nächster Karte, Header oder Trennstrich
                 if curr.starts_with('#')
                     || curr.contains("::")
                     || (i + 1 < lines.len() && is_multiline_separator(lines[i + 1].trim()))
@@ -219,7 +511,7 @@ fn parse_cards(body: &str) -> Vec<FlashCard> {
             continue;
         }
 
-        // 3. Bi-directional / Reversed (:::)
+        // Reversed Card (:::)
         if let Some((q, a)) = line.split_once(":::") {
             let q = q.trim().to_string();
             let a = a.trim().to_string();
@@ -239,7 +531,7 @@ fn parse_cards(body: &str) -> Vec<FlashCard> {
             continue;
         }
 
-        // 4. Single-Line (::)
+        // Single-Line Card (::)
         if let Some((q, a)) = line.split_once("::") {
             cards.push(FlashCard {
                 question: q.trim().to_string(),
@@ -250,7 +542,7 @@ fn parse_cards(body: &str) -> Vec<FlashCard> {
             continue;
         }
 
-        // 5. Cloze Deletion (==Highlight==)
+        // Cloze Deletion (==...==)
         if is_cloze_line(line) {
             if let Some(card) = make_cloze_card(line) {
                 cards.push(card);
@@ -396,9 +688,9 @@ fn render_card_view(frame: &mut Frame, app_state: &AppState) {
     };
 
     let chunks = Layout::vertical([
-        Constraint::Length(3),
-        Constraint::Fill(1),
-        Constraint::Length(2),
+        Constraint::Length(3), // Titel / Metadaten
+        Constraint::Fill(1),   // Kartenbereich
+        Constraint::Length(2), // Hilfe-Footer
     ])
     .margin(1)
     .split(frame.area());
@@ -414,7 +706,11 @@ fn render_card_view(frame: &mut Frame, app_state: &AppState) {
     };
 
     let title_block = Paragraph::new(format!("Deck: {} | Karte: {}", deck.title, progress))
-        .block(Block::bordered().border_type(BorderType::Rounded))
+        .block(
+            Block::bordered()
+                .border_type(BorderType::Rounded)
+                .padding(Padding::horizontal(1)),
+        )
         .style(Style::default().fg(Color::Cyan));
     title_block.render(chunks[0], frame.buffer_mut());
 
@@ -432,15 +728,18 @@ fn render_card_view(frame: &mut Frame, app_state: &AppState) {
             format!(" Karte{} ", kind_badge)
         };
 
+        let question_rendered = render_math_in_text(&card.question);
+
         let content = if app_state.show_answer {
+            let answer_rendered = render_math_in_text(&card.answer);
             format!(
-                "\n{}\n\n━━━━━━━━━━━━━━━━━━━━\n{}",
-                card.question, card.answer
+                "FRAGE:\n{}\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nANTWORT:\n{}",
+                question_rendered, answer_rendered
             )
         } else {
             format!(
-                "\n{}\n\n\n[Leertaste] drücken, um Antwort anzuzeigen",
-                card.question
+                "FRAGE:\n{}\n\n\n[Leertaste] drücken, um Antwort anzuzeigen",
+                question_rendered
             )
         };
 
@@ -449,6 +748,8 @@ fn render_card_view(frame: &mut Frame, app_state: &AppState) {
                 Block::bordered()
                     .title(title)
                     .border_type(BorderType::Double)
+                    // Innenabstand: 2 Zeilen oben/unten, 3 Zeichen links/rechts
+                    .padding(Padding::symmetric(3, 2))
                     .fg(if app_state.show_answer {
                         Color::Green
                     } else {
@@ -460,7 +761,11 @@ fn render_card_view(frame: &mut Frame, app_state: &AppState) {
         card_block.render(chunks[1], frame.buffer_mut());
     } else {
         let empty_block = Paragraph::new("Keine Karten in dieser Datei gefunden.")
-            .block(Block::bordered().border_type(BorderType::Rounded))
+            .block(
+                Block::bordered()
+                    .border_type(BorderType::Rounded)
+                    .padding(Padding::uniform(1)),
+            )
             .style(Style::default().fg(Color::Red));
         empty_block.render(chunks[1], frame.buffer_mut());
     }

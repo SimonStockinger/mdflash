@@ -600,10 +600,7 @@ fn make_cloze_card(line: &str) -> Option<FlashCard> {
     })
 }
 
-// -----------------------------------------------------------------------------
 // UI & Event Loop
-// -----------------------------------------------------------------------------
-
 fn run(mut terminal: DefaultTerminal, app_state: &mut AppState) -> Result<()> {
     loop {
         terminal.draw(|f| render(f, app_state))?;
@@ -733,14 +730,11 @@ fn render_card_view(frame: &mut Frame, app_state: &AppState) {
         let content = if app_state.show_answer {
             let answer_rendered = render_math_in_text(&card.answer);
             format!(
-                "FRAGE:\n{}\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nANTWORT:\n{}",
+                "{}\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n{}",
                 question_rendered, answer_rendered
             )
         } else {
-            format!(
-                "FRAGE:\n{}\n\n\n[Leertaste] drücken, um Antwort anzuzeigen",
-                question_rendered
-            )
+            format!("{}\n", question_rendered)
         };
 
         let card_block = Paragraph::new(content)

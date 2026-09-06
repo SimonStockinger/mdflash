@@ -40,7 +40,7 @@ Was macht der `?`-Operator in einer Funktion, die `Result<T, E>` zurückgibt?
 
 In Rust werden Daten standardmäßig auf dem ==Stack== abgelegt, während dynamisch wachsende Daten auf dem ==Heap== landen.
 Ein ==Mutex== garantiert wechselseitigen Ausschluss bei nebenläufigem Speicherzugriff.
-Rust garantiert Speichersicherheit ohne eine ==Garbage Collection== zur Laufzeit.
+Rust garantiert Speichersicherheit ohne eine ==Garbage Collection== zur Laufzeit.g
 
 ## 1. Definitionen
 

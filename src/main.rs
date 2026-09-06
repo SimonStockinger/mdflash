@@ -195,6 +195,11 @@ fn convert_latex_symbols(latex: &str) -> String {
     s = s.replace(r"\empty", "∅");
     s = s.replace(r"\emptyset", "∅");
 
+    // Modulo-Befehle VOR \pm matchen!
+    s = s.replace(r"\pmod", "mod");
+    s = s.replace(r"\bmod", "mod");
+    s = s.replace(r"\pm", "±");
+
     // Vergleich & Arithmetik
     s = s.replace(r"\le", "≤");
     s = s.replace(r"\leq", "≤");
@@ -205,10 +210,9 @@ fn convert_latex_symbols(latex: &str) -> String {
     s = s.replace(r"\equiv", "≡");
     s = s.replace(r"\cdot", "·");
     s = s.replace(r"\times", "×");
-    s = s.replace(r"\pm", "±");
     s = s.replace(r"\infty", "∞");
 
-    // Griechische Buchstaben (häufig in Beweisen)
+    // Griechische Buchstaben
     s = s.replace(r"\alpha", "α");
     s = s.replace(r"\beta", "β");
     s = s.replace(r"\gamma", "γ");
@@ -241,6 +245,86 @@ fn convert_latex_symbols(latex: &str) -> String {
     s
 }
 
+fn map_script_char(c: char, is_super: bool) -> char {
+    if is_super {
+        match c {
+            '0' => '⁰',
+            '1' => '¹',
+            '2' => '²',
+            '3' => '³',
+            '4' => '⁴',
+            '5' => '⁵',
+            '6' => '⁶',
+            '7' => '⁷',
+            '8' => '⁸',
+            '9' => '⁹',
+            '+' => '⁺',
+            '-' => '⁻',
+            '=' => '⁼',
+            '(' => '⁽',
+            ')' => '⁾',
+            // Variablen & Exponenten erweitert (inkl. e, d, k, m)
+            'a' => 'ᵃ',
+            'b' => 'ᵇ',
+            'c' => 'ᶜ',
+            'd' => 'ᵈ',
+            'e' => 'ᵉ',
+            'f' => 'ᶠ',
+            'g' => 'ᵍ',
+            'h' => 'ʰ',
+            'i' => 'ⁱ',
+            'j' => 'ʲ',
+            'k' => 'ᵏ',
+            'l' => 'ˡ',
+            'm' => 'ᵐ',
+            'n' => 'ⁿ',
+            'o' => 'ᵒ',
+            'p' => 'ᵖ',
+            'r' => 'ʳ',
+            's' => 'ˢ',
+            't' => 'ᵗ',
+            'u' => 'ᵘ',
+            'v' => 'ᵛ',
+            'w' => 'ʷ',
+            'x' => 'ˣ',
+            'y' => 'ʸ',
+            'z' => 'ᶻ',
+            _ => c,
+        }
+    } else {
+        match c {
+            '0' => '₀',
+            '1' => '₁',
+            '2' => '₂',
+            '3' => '₃',
+            '4' => '₄',
+            '5' => '₅',
+            '6' => '₆',
+            '7' => '₇',
+            '8' => '₈',
+            '9' => '₉',
+            '+' => '₊',
+            '-' => '₋',
+            '=' => '₌',
+            '(' => '₍',
+            ')' => '₎',
+            'a' => 'ₐ',
+            'e' => 'ₑ',
+            'o' => 'ₒ',
+            'x' => 'ₓ',
+            'i' => 'ᵢ',
+            'j' => 'ⱼ',
+            'k' => 'ₖ',
+            'l' => 'ₗ',
+            'm' => 'ₘ',
+            'n' => 'ₙ',
+            'p' => 'ₚ',
+            's' => 'ₛ',
+            't' => 'ₜ',
+            _ => c,
+        }
+    }
+}
 fn replace_unary_cmd(input: &str, cmd: &str, prefix: &str) -> String {
     let mut res = input.to_string();
     while let Some(start) = res.find(cmd) {
@@ -335,64 +419,6 @@ fn convert_sub_and_superscripts(input: &str) -> String {
         }
     }
     out
-}
-
-fn map_script_char(c: char, is_super: bool) -> char {
-    if is_super {
-        match c {
-            '0' => '⁰',
-            '1' => '¹',
-            '2' => '²',
-            '3' => '³',
-            '4' => '⁴',
-            '5' => '⁵',
-            '6' => '⁶',
-            '7' => '⁷',
-            '8' => '⁸',
-            '9' => '⁹',
-            '+' => '⁺',
-            '-' => '⁻',
-            '=' => '⁼',
-            '(' => '⁽',
-            ')' => '⁾',
-            'n' => 'ⁿ',
-            'i' => 'ⁱ',
-            'x' => 'ˣ',
-            _ => c,
-        }
-    } else {
-        match c {
-            '0' => '₀',
-            '1' => '₁',
-            '2' => '₂',
-            '3' => '₃',
-            '4' => '₄',
-            '5' => '₅',
-            '6' => '₆',
-            '7' => '₇',
-            '8' => '₈',
-            '9' => '₉',
-            '+' => '₊',
-            '-' => '₋',
-            '=' => '₌',
-            '(' => '₍',
-            ')' => '₎',
-            'a' => 'ₐ',
-            'e' => 'ₑ',
-            'o' => 'ₒ',
-            'x' => 'ₓ',
-            'i' => 'ᵢ',
-            'j' => 'ⱼ',
-            'k' => 'ₖ',
-            'l' => 'ₗ',
-            'm' => 'ₘ',
-            'n' => 'ₙ',
-            'p' => 'ₚ',
-            's' => 'ₛ',
-            't' => 'ₜ',
-            _ => c,
-        }
-    }
 }
 
 // -----------------------------------------------------------------------------

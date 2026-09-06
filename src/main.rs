@@ -1,6 +1,6 @@
 use color_eyre::eyre::{Result, eyre};
 use crossterm::event::{self, Event, KeyCode};
-use latex2unicode::latex2unicode;
+use latex2text::latex_to_text;
 use ratatui::widgets::{Block, BorderType, List, ListItem, Padding, Paragraph, Widget, Wrap};
 use ratatui::{
     DefaultTerminal, Frame,
@@ -140,7 +140,7 @@ fn render_math_in_text(input: &str) -> String {
             }
 
             if closed {
-                let converted = latex2unicode(&formula);
+                let converted = latex_to_text(&formula).unwrap_or_else(|_| formula.clone());
                 if is_block {
                     out.push_str(&format!("\n    {}\n", converted.trim()));
                 } else {

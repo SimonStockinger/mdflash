@@ -319,6 +319,16 @@ fn render_math_in_text(input: &str) -> String {
 fn convert_latex_symbols(latex: &str) -> String {
     let mut s = latex.to_string();
 
+    // Punkte VOR den Akzenten auflösen
+    s = s.replace(r"\dots", "…");
+    s = s.replace(r"\cdots", "⋯");
+    s = s.replace(r"\ddots", "⋱");
+    s = s.replace(r"\vdots", "⋮");
+
+    // Danach erst Akzente und andere Befehle...
+    s = replace_accents(&s);
+    // ...
+
     // 1. Spezifische Umgebungen & Brüche
     s = replace_matrix_environments(&s);
     s = replace_binom(&s);
@@ -499,14 +509,14 @@ fn convert_latex_symbols(latex: &str) -> String {
 fn replace_accents(input: &str) -> String {
     let mut res = input.to_string();
     let accents = [
-        (r"\vec", '\u{20D7}'),
-        (r"\hat", '\u{0302}'),
+        (r"\overline", '\u{0305}'), // Längere Befehle zuerst prüfen
+        (r"\ddot", '\u{0308}'),
         (r"\check", '\u{030C}'),
         (r"\tilde", '\u{0303}'),
+        (r"\vec", '\u{20D7}'),
+        (r"\hat", '\u{0302}'),
         (r"\bar", '\u{0304}'),
-        (r"\overline", '\u{0305}'),
         (r"\dot", '\u{0307}'),
-        (r"\ddot", '\u{0308}'),
     ];
 
     for (cmd, mark) in accents {
@@ -514,6 +524,10 @@ fn replace_accents(input: &str) -> String {
             let after = &res[start + cmd.len()..];
             let trimmed_after = after.trim_start();
             let lead_spaces = after.len() - trimmed_after.len();
+
+            if after.starts_with(|c: char| c.is_ascii_alphabetic()) {
+                break;
+            }
 
             if trimmed_after.starts_with('{') {
                 if let Some(close) = find_matching_brace(trimmed_after) {
@@ -535,7 +549,6 @@ fn replace_accents(input: &str) -> String {
     }
     res
 }
-
 fn replace_unary_cmd(input: &str, cmd: &str, prefix: &str) -> String {
     let mut res = input.to_string();
     while let Some(start) = res.find(cmd) {

@@ -1,11 +1,10 @@
 use color_eyre::eyre::{Result, eyre};
 use crossterm::event::{self, Event, KeyCode};
+use ratatui::layout::{Constraint, Layout};
+use ratatui::style::{Color, Modifier, Style, Stylize};
+use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, BorderType, List, ListItem, Padding, Paragraph, Widget, Wrap};
-use ratatui::{
-    DefaultTerminal, Frame,
-    layout::{Constraint, Layout},
-    style::{Color, Style, Stylize},
-};
+use ratatui::{DefaultTerminal, Frame};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -102,6 +101,159 @@ fn init() -> Result<AppState> {
 }
 
 // -----------------------------------------------------------------------------
+// Markdown Inline Parser (**fett**, *kursiv*, `code`, ~~strike~~)
+// -----------------------------------------------------------------------------
+
+fn parse_markdown_to_text(input: &str) -> Text<'static> {
+    let mut lines = Vec::new();
+    for line in input.lines() {
+        lines.push(parse_markdown_line(line));
+    }
+    Text::from(lines)
+}
+
+fn parse_markdown_line(line: &str) -> Line<'static> {
+    let mut spans = Vec::new();
+    let mut chars = line.chars().peekable();
+    let mut current = String::new();
+
+    while let Some(&c) = chars.peek() {
+        // Inline Code `...`
+        if c == '`' {
+            if !current.is_empty() {
+                spans.push(Span::raw(current.clone()));
+                current.clear();
+            }
+            chars.next(); // consume `
+            let mut code = String::new();
+            while let Some(&inner) = chars.peek() {
+                chars.next();
+                if inner == '`' {
+                    break;
+                }
+                code.push(inner);
+            }
+            spans.push(Span::styled(
+                code,
+                Style::default()
+                    .fg(Color::Yellow)
+                    .bg(Color::Rgb(40, 40, 40)),
+            ));
+            continue;
+        }
+
+        // Durchgestrichen ~~...~~
+        if c == '~' {
+            let mut clone_iter = chars.clone();
+            clone_iter.next();
+            if clone_iter.peek() == Some(&'~') {
+                if !current.is_empty() {
+                    spans.push(Span::raw(current.clone()));
+                    current.clear();
+                }
+                chars.next(); // first ~
+                chars.next(); // second ~
+                let mut inner = String::new();
+                while let Some(ch) = chars.next() {
+                    if ch == '~' && chars.peek() == Some(&'~') {
+                        chars.next();
+                        break;
+                    }
+                    inner.push(ch);
+                }
+                spans.push(Span::styled(
+                    inner,
+                    Style::default().add_modifier(Modifier::CROSSED_OUT),
+                ));
+                continue;
+            }
+        }
+
+        // Fett & Kursiv (***, **, *, ___, __, _)
+        if c == '*' || c == '_' {
+            let marker = c;
+            let count = count_markers(&mut chars.clone(), marker);
+
+            if count > 0 {
+                if !current.is_empty() {
+                    spans.push(Span::raw(current.clone()));
+                    current.clear();
+                }
+
+                // Marker verbrauchen
+                for _ in 0..count {
+                    chars.next();
+                }
+
+                let mut inner = String::new();
+                let mut closed = false;
+
+                while let Some(ch) = chars.next() {
+                    if ch == marker {
+                        let mut match_count = 1;
+                        while match_count < count && chars.peek() == Some(&marker) {
+                            chars.next();
+                            match_count += 1;
+                        }
+                        if match_count == count {
+                            closed = true;
+                            break;
+                        } else {
+                            for _ in 0..match_count {
+                                inner.push(marker);
+                            }
+                        }
+                    } else {
+                        inner.push(ch);
+                    }
+                }
+
+                if closed {
+                    let mut style = Style::default();
+                    match count {
+                        1 => style = style.add_modifier(Modifier::ITALIC),
+                        2 => style = style.add_modifier(Modifier::BOLD),
+                        _ => style = style.add_modifier(Modifier::BOLD | Modifier::ITALIC),
+                    }
+                    spans.push(Span::styled(inner, style));
+                } else {
+                    for _ in 0..count {
+                        current.push(marker);
+                    }
+                    current.push_str(&inner);
+                }
+                continue;
+            }
+        }
+
+        current.push(c);
+        chars.next();
+    }
+
+    if !current.is_empty() {
+        spans.push(Span::raw(current));
+    }
+
+    Line::from(spans)
+}
+
+fn count_markers(chars: &mut std::iter::Peekable<std::str::Chars>, marker: char) -> usize {
+    let mut count = 0;
+    while let Some(&c) = chars.peek() {
+        if c == marker {
+            count += 1;
+            chars.next();
+            if count == 3 {
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+    count
+}
+
+// -----------------------------------------------------------------------------
 // LaTeX Math Parser & Unicode Konverter (Zero-Dependency)
 // -----------------------------------------------------------------------------
 
@@ -113,7 +265,7 @@ fn render_math_in_text(input: &str) -> String {
         if ch == '$' {
             let is_block = chars.peek() == Some(&'$');
             if is_block {
-                chars.next(); // zweites '$' verbrauchen
+                chars.next();
             }
 
             let mut formula = String::new();
@@ -164,12 +316,10 @@ fn render_math_in_text(input: &str) -> String {
 fn convert_latex_symbols(latex: &str) -> String {
     let mut s = latex.to_string();
 
-    // 1. Matrizen, Binomialkoeffizienten und Brüche
     s = replace_matrix_environments(&s);
     s = replace_binom(&s);
     s = replace_frac(&s);
 
-    // 2. Akzente & Unäre Befehle
     s = replace_accents(&s);
     s = replace_unary_cmd(&s, r"\sqrt", "√");
     s = replace_unary_cmd(&s, r"\textbf", "");
@@ -177,16 +327,14 @@ fn convert_latex_symbols(latex: &str) -> String {
     s = replace_unary_cmd(&s, r"\mathbf", "");
     s = replace_unary_cmd(&s, r"\text", "");
 
-    // 3. LaTeX Delimiter & Abstände bereinigen
     s = s.replace(r"\left", "");
     s = s.replace(r"\right", "");
     s = s.replace(r"\,", " ");
     s = s.replace(r"\;", " ");
     s = s.replace(r"\!", "");
-    s = s.replace(r"\quad", "   ");
+    s = s.replace(r"\quad", "    ");
     s = s.replace(r"\qquad", "      ");
 
-    // 4. Blackboard & Zahlenmengen
     s = s.replace(r"\mathbb{R}", "ℝ");
     s = s.replace(r"\mathbb{N}", "ℕ");
     s = s.replace(r"\mathbb{Z}", "ℤ");
@@ -194,7 +342,6 @@ fn convert_latex_symbols(latex: &str) -> String {
     s = s.replace(r"\mathbb{C}", "ℂ");
     s = s.replace(r"\mathbb{P}", "ℙ");
 
-    // 5. Große Operatoren & Analysis
     s = s.replace(r"\sum", "∑");
     s = s.replace(r"\prod", "∏");
     s = s.replace(r"\coprod", "∐");
@@ -206,7 +353,6 @@ fn convert_latex_symbols(latex: &str) -> String {
     s = s.replace(r"\nabla", "∇");
     s = s.replace(r"\infty", "∞");
 
-    // 6. Standard-Funktionen
     for func in &[
         "sin", "cos", "tan", "cot", "sec", "csc", "arcsin", "arccos", "arctan", "sinh", "cosh",
         "tanh", "coth", "ln", "log", "exp", "lim", "sup", "inf", "max", "min", "det", "deg", "gcd",
@@ -214,7 +360,6 @@ fn convert_latex_symbols(latex: &str) -> String {
         s = s.replace(&format!(r"\{func}"), func);
     }
 
-    // 7. Logik & Pfeile
     s = s.replace(r"\iff", "⟺");
     s = s.replace(r"\implies", "⟹");
     s = s.replace(r"\impliedby", "⟸");
@@ -238,7 +383,6 @@ fn convert_latex_symbols(latex: &str) -> String {
     s = s.replace(r"\vDash", "⊨");
     s = s.replace(r"\qed", "∎");
 
-    // 8. Mengenlehre & Relationen
     s = s.replace(r"\notin", "∉");
     s = s.replace(r"\in", "∈");
     s = s.replace(r"\subseteq", "⊆");
@@ -252,7 +396,6 @@ fn convert_latex_symbols(latex: &str) -> String {
     s = s.replace(r"\emptyset", "∅");
     s = s.replace(r"\empty", "∅");
 
-    // 9. Arithmetik & Vergleich
     s = s.replace(r"\pmod", "mod");
     s = s.replace(r"\bmod", "mod");
     s = s.replace(r"\pm", "±");
@@ -283,7 +426,6 @@ fn convert_latex_symbols(latex: &str) -> String {
     s = s.replace(r"\ddots", "⋱");
     s = s.replace(r"\vdots", "⋮");
 
-    // 10. Griechische Buchstaben (Groß & Klein)
     s = s.replace(r"\alpha", "α");
     s = s.replace(r"\beta", "β");
     s = s.replace(r"\gamma", "γ");
@@ -325,23 +467,20 @@ fn convert_latex_symbols(latex: &str) -> String {
     s = s.replace(r"\omega", "ω");
     s = s.replace(r"\Omega", "Ω");
 
-    // 11. Hoch- und Tiefstellung
-    s = convert_sub_and_superscripts(&s);
-
-    s
+    convert_sub_and_superscripts(&s)
 }
 
 fn replace_accents(input: &str) -> String {
     let mut res = input.to_string();
     let accents = [
-        (r"\vec", '\u{20D7}'),      // Pfeil darüber
-        (r"\hat", '\u{0302}'),      // Dach
-        (r"\check", '\u{030C}'),    // Caron
-        (r"\tilde", '\u{0303}'),    // Tilde
-        (r"\bar", '\u{0304}'),      // Balken
-        (r"\overline", '\u{0305}'), // Überstrich
-        (r"\dot", '\u{0307}'),      // Punkt darüber
-        (r"\ddot", '\u{0308}'),     // Zwei Punkte
+        (r"\vec", '\u{20D7}'),
+        (r"\hat", '\u{0302}'),
+        (r"\check", '\u{030C}'),
+        (r"\tilde", '\u{0303}'),
+        (r"\bar", '\u{0304}'),
+        (r"\overline", '\u{0305}'),
+        (r"\dot", '\u{0307}'),
+        (r"\ddot", '\u{0308}'),
     ];
 
     for (cmd, mark) in accents {
@@ -909,9 +1048,9 @@ fn render_card_view(frame: &mut Frame, app_state: &AppState) {
     };
 
     let chunks = Layout::vertical([
-        Constraint::Length(3), // Titel / Metadaten
-        Constraint::Fill(1),   // Kartenbereich
-        Constraint::Length(2), // Hilfe-Footer
+        Constraint::Length(3),
+        Constraint::Fill(1),
+        Constraint::Length(2),
     ])
     .margin(1)
     .split(frame.area());
@@ -949,9 +1088,10 @@ fn render_card_view(frame: &mut Frame, app_state: &AppState) {
             format!(" Karte{} ", kind_badge)
         };
 
+        // 1. Zuerst LaTeX $...$ in Unicode umwandeln
         let question_rendered = render_math_in_text(&card.question);
 
-        let content = if app_state.show_answer {
+        let raw_text = if app_state.show_answer {
             let answer_rendered = render_math_in_text(&card.answer);
             format!(
                 "{}\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n{}",
@@ -961,7 +1101,10 @@ fn render_card_view(frame: &mut Frame, app_state: &AppState) {
             format!("{}\n", question_rendered)
         };
 
-        let card_block = Paragraph::new(content)
+        // 2. Anschließend Markdown-Styles (fett, kursiv, inline code etc.) erzeugen
+        let styled_text = parse_markdown_to_text(&raw_text);
+
+        let card_block = Paragraph::new(styled_text)
             .block(
                 Block::bordered()
                     .title(title)

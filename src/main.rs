@@ -1047,7 +1047,7 @@ fn run(mut terminal: DefaultTerminal, app_state: &mut AppState) -> Result<()> {
                         }
                     }
                 }
-                KeyCode::Left | KeyCode::Char('k') | KeyCode::Char('p') => {
+                KeyCode::Left | KeyCode::Char('k') | KeyCode::Char('b') => {
                     if app_state.current_card_index > 0 {
                         app_state.current_card_index -= 1;
                         app_state.show_answer = false;
@@ -1194,7 +1194,7 @@ fn render_card_view(frame: &mut Frame, app_state: &AppState) {
     }
 
     let help_text = Paragraph::new(
-        "[Space] Antwort zeigen  |  [↑ / ↓] Scrollen  |  [→ / N] Nächste  |  [← / P] Vorherige  |  [Esc / Q] Beenden",
+        "[Space] Show Answer  |  [↑ / ↓] Scroll  |  [→ / N] Next  |  [← / B] Back  |  [Esc / Q] Quit",
     )
     .style(Style::default().fg(Color::DarkGray));
     help_text.render(chunks[2], frame.buffer_mut());

@@ -5,6 +5,7 @@ use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, BorderType, List, ListItem, Padding, Paragraph, Widget, Wrap};
 use ratatui::{DefaultTerminal, Frame};
+use std::cmp::min;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -23,6 +24,7 @@ struct AppState {
     deck: Option<CardDeck>,
     current_card_index: usize,
     show_answer: bool,
+    scroll_offset: u16,
 }
 
 #[derive(Debug, Default)]
@@ -83,6 +85,7 @@ fn init() -> Result<AppState> {
             deck: Some(deck),
             current_card_index: 0,
             show_answer: false,
+            scroll_offset: 0,
         })
     } else {
         let entries = fs::read_dir(&path)?
@@ -96,6 +99,7 @@ fn init() -> Result<AppState> {
             deck: None,
             current_card_index: 0,
             show_answer: false,
+            scroll_offset: 0,
         })
     }
 }
@@ -124,7 +128,7 @@ fn parse_markdown_line(line: &str) -> Line<'static> {
                 spans.push(Span::raw(current.clone()));
                 current.clear();
             }
-            chars.next(); // consume `
+            chars.next();
             let mut code = String::new();
             while let Some(&inner) = chars.peek() {
                 chars.next();
@@ -137,7 +141,7 @@ fn parse_markdown_line(line: &str) -> Line<'static> {
                 code,
                 Style::default()
                     .fg(Color::Yellow)
-                    .bg(Color::Rgb(40, 40, 40)),
+                    .bg(Color::Rgb(45, 45, 45)),
             ));
             continue;
         }
@@ -151,8 +155,8 @@ fn parse_markdown_line(line: &str) -> Line<'static> {
                     spans.push(Span::raw(current.clone()));
                     current.clear();
                 }
-                chars.next(); // first ~
-                chars.next(); // second ~
+                chars.next();
+                chars.next();
                 let mut inner = String::new();
                 while let Some(ch) = chars.next() {
                     if ch == '~' && chars.peek() == Some(&'~') {
@@ -180,7 +184,6 @@ fn parse_markdown_line(line: &str) -> Line<'static> {
                     current.clear();
                 }
 
-                // Marker verbrauchen
                 for _ in 0..count {
                     chars.next();
                 }
@@ -254,7 +257,7 @@ fn count_markers(chars: &mut std::iter::Peekable<std::str::Chars>, marker: char)
 }
 
 // -----------------------------------------------------------------------------
-// LaTeX Math Parser & Unicode Konverter (Zero-Dependency)
+// LaTeX Math Parser & Unicode Engine (Zero-Dependency)
 // -----------------------------------------------------------------------------
 
 fn render_math_in_text(input: &str) -> String {
@@ -293,7 +296,7 @@ fn render_math_in_text(input: &str) -> String {
             if closed {
                 let converted = convert_latex_symbols(&formula);
                 if is_block {
-                    out.push_str(&format!("\n    {}\n", converted.trim()));
+                    out.push_str(&format!("\n   {}\n", converted.trim()));
                 } else {
                     out.push_str(&converted);
                 }
@@ -316,25 +319,43 @@ fn render_math_in_text(input: &str) -> String {
 fn convert_latex_symbols(latex: &str) -> String {
     let mut s = latex.to_string();
 
+    // 1. Spezifische Umgebungen & Brüche
     s = replace_matrix_environments(&s);
     s = replace_binom(&s);
-    s = replace_frac(&s);
+    s = replace_frac_cmd(&s, r"\tfrac");
+    s = replace_frac_cmd(&s, r"\dfrac");
+    s = replace_frac_cmd(&s, r"\frac");
 
+    // 2. Unäre Befehle & Akzente
     s = replace_accents(&s);
     s = replace_unary_cmd(&s, r"\sqrt", "√");
     s = replace_unary_cmd(&s, r"\textbf", "");
     s = replace_unary_cmd(&s, r"\mathrm", "");
     s = replace_unary_cmd(&s, r"\mathbf", "");
+    s = replace_unary_cmd(&s, r"\mathit", "");
     s = replace_unary_cmd(&s, r"\text", "");
 
+    // 3. Delimiter & Abstände bereinigen
     s = s.replace(r"\left", "");
     s = s.replace(r"\right", "");
     s = s.replace(r"\,", " ");
     s = s.replace(r"\;", " ");
     s = s.replace(r"\!", "");
-    s = s.replace(r"\quad", "    ");
+    s = s.replace(r"\quad", "   ");
     s = s.replace(r"\qquad", "      ");
+    s = s.replace(r"\{", "{");
+    s = s.replace(r"\}", "}");
 
+    // 4. Modulo & Verwandtes VOR \pm matchen
+    s = replace_unary_cmd(&s, r"\pmod", " mod ");
+    s = s.replace(r"\bmod", " mod ");
+
+    // 5. Kryptographie-Operatoren
+    s = s.replace(r"\oplus", "⊕");
+    s = s.replace(r"\otimes", "⊗");
+    s = s.replace(r"\odot", "⊙");
+
+    // 6. Blackboard & Zahlenmengen
     s = s.replace(r"\mathbb{R}", "ℝ");
     s = s.replace(r"\mathbb{N}", "ℕ");
     s = s.replace(r"\mathbb{Z}", "ℤ");
@@ -342,6 +363,7 @@ fn convert_latex_symbols(latex: &str) -> String {
     s = s.replace(r"\mathbb{C}", "ℂ");
     s = s.replace(r"\mathbb{P}", "ℙ");
 
+    // 7. Große Operatoren & Analysis
     s = s.replace(r"\sum", "∑");
     s = s.replace(r"\prod", "∏");
     s = s.replace(r"\coprod", "∐");
@@ -353,13 +375,16 @@ fn convert_latex_symbols(latex: &str) -> String {
     s = s.replace(r"\nabla", "∇");
     s = s.replace(r"\infty", "∞");
 
+    // 8. Standard-Mathematikfunktionen
     for func in &[
         "sin", "cos", "tan", "cot", "sec", "csc", "arcsin", "arccos", "arctan", "sinh", "cosh",
         "tanh", "coth", "ln", "log", "exp", "lim", "sup", "inf", "max", "min", "det", "deg", "gcd",
+        "Pr",
     ] {
         s = s.replace(&format!(r"\{func}"), func);
     }
 
+    // 9. Logik & Pfeile
     s = s.replace(r"\iff", "⟺");
     s = s.replace(r"\implies", "⟹");
     s = s.replace(r"\impliedby", "⟸");
@@ -383,6 +408,7 @@ fn convert_latex_symbols(latex: &str) -> String {
     s = s.replace(r"\vDash", "⊨");
     s = s.replace(r"\qed", "∎");
 
+    // 10. Mengenlehre & Relationen
     s = s.replace(r"\notin", "∉");
     s = s.replace(r"\in", "∈");
     s = s.replace(r"\subseteq", "⊆");
@@ -396,8 +422,7 @@ fn convert_latex_symbols(latex: &str) -> String {
     s = s.replace(r"\emptyset", "∅");
     s = s.replace(r"\empty", "∅");
 
-    s = s.replace(r"\pmod", "mod");
-    s = s.replace(r"\bmod", "mod");
+    // 11. Arithmetik & Vergleich
     s = s.replace(r"\pm", "±");
     s = s.replace(r"\mp", "∓");
     s = s.replace(r"\cdot", "·");
@@ -426,6 +451,7 @@ fn convert_latex_symbols(latex: &str) -> String {
     s = s.replace(r"\ddots", "⋱");
     s = s.replace(r"\vdots", "⋮");
 
+    // 12. Griechische Buchstaben
     s = s.replace(r"\alpha", "α");
     s = s.replace(r"\beta", "β");
     s = s.replace(r"\gamma", "γ");
@@ -530,10 +556,12 @@ fn replace_unary_cmd(input: &str, cmd: &str, prefix: &str) -> String {
     res
 }
 
-fn replace_frac(input: &str) -> String {
+fn replace_frac_cmd(input: &str, cmd: &str) -> String {
     let mut res = input.to_string();
-    while let Some(start) = res.find(r"\frac") {
-        let after = &res[start + 5..];
+    let cmd_len = cmd.len();
+
+    while let Some(start) = res.find(cmd) {
+        let after = &res[start + cmd_len..];
         if let Some(open1) = after.find('{') {
             if after[..open1].trim().is_empty() {
                 if let Some(close1) = find_matching_brace(&after[open1..]) {
@@ -543,7 +571,7 @@ fn replace_frac(input: &str) -> String {
                         if rem[..open2].trim().is_empty() {
                             if let Some(close2) = find_matching_brace(&rem[open2..]) {
                                 let den = &rem[open2 + 1..open2 + close2];
-                                let total_len = 5 + open1 + close1 + 1 + open2 + close2 + 1;
+                                let total_len = cmd_len + open1 + close1 + 1 + open2 + close2 + 1;
                                 let replacement = format!("({} / {})", num.trim(), den.trim());
                                 res.replace_range(start..start + total_len, &replacement);
                                 continue;
@@ -682,6 +710,7 @@ fn map_script_char(c: char, is_super: bool) -> char {
             'x' => 'ˣ',
             'y' => 'ʸ',
             'z' => 'ᶻ',
+            'T' => 'ᵀ',
             _ => c,
         }
     } else {
@@ -834,7 +863,14 @@ fn parse_cards(body: &str) -> Vec<FlashCard> {
     while i < lines.len() {
         let line = lines[i].trim();
 
-        if line.starts_with('#') || line.is_empty() {
+        // Abschnitte oder Blockquotes (> ...) überspringen
+        if line.starts_with('#') || line.starts_with('>') || line.is_empty() {
+            i += 1;
+            continue;
+        }
+
+        // Markdown-Tabellen ignorieren
+        if line.starts_with('|') {
             i += 1;
             continue;
         }
@@ -844,7 +880,7 @@ fn parse_cards(body: &str) -> Vec<FlashCard> {
             continue;
         }
 
-        // Multi-Line Card
+        // Multi-Line Card (Frage gefolgt von einer Zeile mit "?")
         if i + 1 < lines.len() && is_multiline_separator(lines[i + 1].trim()) {
             let question = line.to_string();
             let mut answer_lines = Vec::new();
@@ -852,7 +888,10 @@ fn parse_cards(body: &str) -> Vec<FlashCard> {
 
             while i < lines.len() {
                 let curr = lines[i].trim();
+                // Abbruchbedingung: Neuer Header, neue Singleline/Reversed/Cloze-Karte oder nächster Trenner
                 if curr.starts_with('#')
+                    || curr.starts_with('>')
+                    || curr.starts_with('|')
                     || curr.contains("::")
                     || (i + 1 < lines.len() && is_multiline_separator(lines[i + 1].trim()))
                     || is_cloze_line(curr)
@@ -973,6 +1012,16 @@ fn run(mut terminal: DefaultTerminal, app_state: &mut AppState) -> Result<()> {
                 KeyCode::Esc | KeyCode::Char('q') => break,
                 KeyCode::Char(' ') => {
                     app_state.show_answer = !app_state.show_answer;
+                    app_state.scroll_offset = 0;
+                }
+                // Vertikales Scrollen bei langen Antworten
+                KeyCode::Up => {
+                    if app_state.scroll_offset > 0 {
+                        app_state.scroll_offset -= 1;
+                    }
+                }
+                KeyCode::Down => {
+                    app_state.scroll_offset = app_state.scroll_offset.saturating_add(1);
                 }
                 KeyCode::Right | KeyCode::Char('j') | KeyCode::Char('n') => {
                     if let Some(deck) = &app_state.deck {
@@ -981,6 +1030,7 @@ fn run(mut terminal: DefaultTerminal, app_state: &mut AppState) -> Result<()> {
                         {
                             app_state.current_card_index += 1;
                             app_state.show_answer = false;
+                            app_state.scroll_offset = 0;
                         }
                     }
                 }
@@ -988,6 +1038,7 @@ fn run(mut terminal: DefaultTerminal, app_state: &mut AppState) -> Result<()> {
                     if app_state.current_card_index > 0 {
                         app_state.current_card_index -= 1;
                         app_state.show_answer = false;
+                        app_state.scroll_offset = 0;
                     }
                 }
                 _ => {}
@@ -1048,9 +1099,9 @@ fn render_card_view(frame: &mut Frame, app_state: &AppState) {
     };
 
     let chunks = Layout::vertical([
-        Constraint::Length(3),
-        Constraint::Fill(1),
-        Constraint::Length(2),
+        Constraint::Length(3), // Header
+        Constraint::Fill(1),   // Karteninhalt
+        Constraint::Length(2), // Hilfe & Navigation
     ])
     .margin(1)
     .split(frame.area());
@@ -1088,7 +1139,6 @@ fn render_card_view(frame: &mut Frame, app_state: &AppState) {
             format!(" Karte{} ", kind_badge)
         };
 
-        // 1. Zuerst LaTeX $...$ in Unicode umwandeln
         let question_rendered = render_math_in_text(&card.question);
 
         let raw_text = if app_state.show_answer {
@@ -1101,7 +1151,6 @@ fn render_card_view(frame: &mut Frame, app_state: &AppState) {
             format!("{}\n", question_rendered)
         };
 
-        // 2. Anschließend Markdown-Styles (fett, kursiv, inline code etc.) erzeugen
         let styled_text = parse_markdown_to_text(&raw_text);
 
         let card_block = Paragraph::new(styled_text)
@@ -1116,6 +1165,7 @@ fn render_card_view(frame: &mut Frame, app_state: &AppState) {
                         Color::Yellow
                     }),
             )
+            .scroll((app_state.scroll_offset, 0))
             .wrap(Wrap { trim: false });
 
         card_block.render(chunks[1], frame.buffer_mut());
@@ -1131,7 +1181,7 @@ fn render_card_view(frame: &mut Frame, app_state: &AppState) {
     }
 
     let help_text = Paragraph::new(
-        "[Space] Antwort zeigen  |  [→ / N] Nächste  |  [← / P] Vorherige  |  [Esc / Q] Beenden",
+        "[Space] Antwort zeigen  |  [↑ / ↓] Scrollen  |  [→ / N] Nächste  |  [← / P] Vorherige  |  [Esc / Q] Beenden",
     )
     .style(Style::default().fg(Color::DarkGray));
     help_text.render(chunks[2], frame.buffer_mut());

@@ -1,49 +1,66 @@
-use color_eyre::eyre::{Ok, Result};
-use crossterm::event::{self, Event};
-use ratatui::{
-    DefaultTerminal, Frame,
-    layout::{Constraint, Layout},
-    style::{Color, Stylize},
-    widgets::{Block, List, ListItem, Widget},
-};
+use color_eyre::eyre::{Result, eyre};
+use crossterm::event::{self, Event, KeyCode};
+use ratatui::DefaultTerminal;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
 
-#[derive(Debug, Default)]
-struct AppState {
+mod parsing;
+mod rendering;
+
+use crate::parsing::parse_markdown::parse_markdown_deck;
+use crate::parsing::*;
+use crate::rendering::views::render;
+
+#[derive(Debug)]
+pub enum AppMode {
+    Directory,
+    DirectFile,
+}
+
+#[derive(Debug)]
+pub struct AppState {
+    mode: AppMode,
     path: PathBuf,
     data: Data,
+    deck: Option<CardDeck>,
+    current_card_index: usize,
+    show_answer: bool,
+    scroll_offset: u16,
 }
 
 #[derive(Debug, Default)]
-struct Data {
+pub struct Data {
     dir_files: Vec<PathBuf>,
 }
 
-#[derive(Debug, Default)]
-struct CardDeck {
-    title: &'static str,
-    path: &'static str,
-    date: &'static str,
-    index: u32,
-    total_number_of_cards: u32,
-    cards_left: u32,
+#[derive(Debug, Default, Clone)]
+pub struct CardDeck {
+    title: String,
+    tags: Vec<String>,
+    path: PathBuf,
     flashcards: Vec<FlashCard>,
 }
 
-#[derive(Debug, Default)]
-struct FlashCard {
-    title: &'static str,
-    question: &'static str,
-    answer: &'static str,
-    finished: bool,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CardKind {
+    SingleLine,
+    Reversed,
+    MultiLine,
+    Cloze,
+}
+
+#[derive(Debug, Clone)]
+pub struct FlashCard {
+    pub question: String,
+    pub answer: String,
+    pub kind: CardKind,
 }
 
 fn main() -> Result<()> {
-    let mut state = init().unwrap();
+    color_eyre::install()?;
 
-    color_eyre::install();
+    let mut state = init()?;
     let terminal = ratatui::init();
 
     let res = run(terminal, &mut state);
@@ -52,70 +69,84 @@ fn main() -> Result<()> {
 }
 
 fn init() -> Result<AppState> {
-    let path = env::args().nth(1).unwrap_or_else(|| ".".to_string());
-    let path_buf = PathBuf::from(&path);
+    let arg = env::args().nth(1).unwrap_or_else(|| ".".to_string());
+    let path = PathBuf::from(&arg);
 
-    let entries = fs::read_dir(&path)?
-        .map(|res| res.map(|e| e.path()))
-        .collect::<Result<Vec<_>, _>>()?;
+    if !path.exists() {
+        return Err(eyre!("Pfad existiert nicht: {}", path.display()));
+    }
 
-    let state = AppState {
-        path: path_buf,
-        data: Data { dir_files: entries },
-    };
+    if path.is_file() {
+        let content = fs::read_to_string(&path)?;
+        let deck = parse_markdown_deck(&path, &content);
 
-    Ok(state)
+        Ok(AppState {
+            mode: AppMode::DirectFile,
+            path,
+            data: Data::default(),
+            deck: Some(deck),
+            current_card_index: 0,
+            show_answer: false,
+            scroll_offset: 0,
+        })
+    } else {
+        let entries = fs::read_dir(&path)?
+            .map(|res| res.map(|e| e.path()))
+            .collect::<std::io::Result<Vec<_>>>()?;
+
+        Ok(AppState {
+            mode: AppMode::Directory,
+            path,
+            data: Data { dir_files: entries },
+            deck: None,
+            current_card_index: 0,
+            show_answer: false,
+            scroll_offset: 0,
+        })
+    }
 }
 
+// UI & Event Loop
 fn run(mut terminal: DefaultTerminal, app_state: &mut AppState) -> Result<()> {
     loop {
-        // Rendering
-        terminal.draw(|f| render(f, app_state));
-        // Input handling
+        terminal.draw(|f| render(f, app_state))?;
+
         if let Event::Key(key) = event::read()? {
             match key.code {
-                event::KeyCode::Esc => {
-                    break;
+                KeyCode::Esc | KeyCode::Char('q') => break,
+                KeyCode::Char(' ') => {
+                    app_state.show_answer = !app_state.show_answer;
+                    app_state.scroll_offset = 0;
+                }
+                KeyCode::Up => {
+                    if app_state.scroll_offset > 0 {
+                        app_state.scroll_offset -= 1;
+                    }
+                }
+                KeyCode::Down => {
+                    app_state.scroll_offset = app_state.scroll_offset.saturating_add(1);
+                }
+                KeyCode::Right | KeyCode::Char('j') | KeyCode::Char('n') => {
+                    if let Some(deck) = &app_state.deck {
+                        if !deck.flashcards.is_empty()
+                            && app_state.current_card_index + 1 < deck.flashcards.len()
+                        {
+                            app_state.current_card_index += 1;
+                            app_state.show_answer = false;
+                            app_state.scroll_offset = 0;
+                        }
+                    }
+                }
+                KeyCode::Left | KeyCode::Char('k') | KeyCode::Char('b') => {
+                    if app_state.current_card_index > 0 {
+                        app_state.current_card_index -= 1;
+                        app_state.show_answer = false;
+                        app_state.scroll_offset = 0;
+                    }
                 }
                 _ => {}
             }
         }
     }
     Ok(())
-}
-
-fn render(frame: &mut Frame, app_state: &AppState) {
-    let [border_area] = Layout::vertical([Constraint::Fill(1)])
-        .margin(1)
-        .areas(frame.area());
-    let [inner_area] = Layout::vertical([Constraint::Fill(1)])
-        .margin(1)
-        .areas(border_area);
-    Block::bordered()
-        .border_type(ratatui::widgets::BorderType::Rounded)
-        .fg(Color::DarkGray)
-        .render(border_area, frame.buffer_mut());
-
-    let items = app_state
-        .data
-        .dir_files
-        .iter()
-        .filter(|path| {
-            path.is_file()
-                && path
-                    .extension()
-                    .map_or(false, |ext| ext.eq_ignore_ascii_case("md"))
-        })
-        .map(|path| {
-            let name = path
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_else(|| path.to_string_lossy().into_owned());
-
-            ListItem::new(name)
-        });
-
-    let list = List::new(items);
-
-    list.render(inner_area, frame.buffer_mut())
 }
